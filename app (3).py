@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -64,11 +63,11 @@ REASON: [brief explanation]
 """
 
 # LOAD AND SAVE FEEDBACK
-
 columns = [
     "timestamp", "rating", "comment", "category",
     "sentiment", "reason", "review_required", "review_reason"
 ]
+
 
 def load_feedback():
     if os.path.exists(DATA_FILE):
@@ -81,9 +80,7 @@ def save_feedback(data):
 
 
 # AI CLASSIFICATION
-
 def classify_comment(comment):
-
     key = st.secrets.get("GROQ-API-KEY")
 
     if not key:
@@ -112,7 +109,6 @@ def classify_comment(comment):
         )
 
         response.raise_for_status()
-
         answer = response.json()["choices"][0]["message"]["content"]
 
         category = re.search(r"CATEGORY:\s*([a-z_]+)", answer, re.I)
@@ -139,7 +135,6 @@ def classify_comment(comment):
 
 
 # MANUAL REVIEW RULES
-
 SERIOUS_TERMS = [
     "unsafe", "safety", "injured", "injury", "assault",
     "harassment", "discrimination", "racist",
@@ -148,7 +143,6 @@ SERIOUS_TERMS = [
 
 
 def check_review_required(comment, rating, category, sentiment):
-
     reasons = []
 
     if category == "api_error":
@@ -163,17 +157,17 @@ def check_review_required(comment, rating, category, sentiment):
     if any(term in comment.lower() for term in SERIOUS_TERMS):
         reasons.append("Potential serious customer concern")
 
-    if rating <= 2 and sentiment == "positive":
-        reasons.append("Rating and sentiment do not agree")
+    if rating is not None:
+        if rating <= 2 and sentiment == "positive":
+            reasons.append("Rating and sentiment do not agree")
 
-    if rating >= 4 and sentiment == "negative":
-        reasons.append("Rating and sentiment do not agree")
+        if rating >= 4 and sentiment == "negative":
+            reasons.append("Rating and sentiment do not agree")
 
     return len(reasons) > 0, "; ".join(reasons)
 
 
 # NAVIGATION
-
 st.title("✈️ Airline Customer Feedback")
 
 page = st.sidebar.radio(
@@ -183,7 +177,6 @@ page = st.sidebar.radio(
 
 
 # CUSTOMER FEEDBACK FORM
-
 if page == "Submit Feedback":
 
     st.header("Share Your Experience")
@@ -194,10 +187,18 @@ if page == "Submit Feedback":
 
     with st.form("feedback_form"):
 
-        rating = st.slider(
-            "How would you rate your experience?",
-            1, 5, 3
+        include_rating = st.checkbox(
+            "I want to provide a rating",
+            value=True
         )
+
+        if include_rating:
+            rating = st.slider(
+                "How would you rate your experience?",
+                1, 5, 3
+            )
+        else:
+            rating = None
 
         comment = st.text_area(
             "Tell us more about your experience (optional)"
@@ -207,50 +208,66 @@ if page == "Submit Feedback":
 
     if submitted:
 
-        category = "no_comment"
-        sentiment = "unclear"
-        reason = "No written comment provided"
-        review_required = False
-        review_reason = ""
+        if rating is None and not comment.strip():
 
-        if comment.strip():
+            st.error(
+                "Please provide a rating, a comment, or both."
+            )
 
-            with st.spinner("Analyzing your feedback..."):
+        else:
 
-                category, sentiment, reason = classify_comment(
-                    comment.strip()
+            category = "no_comment"
+            sentiment = "unclear"
+            reason = "No written comment provided"
+            review_required = False
+            review_reason = ""
+
+            if comment.strip():
+
+                with st.spinner("Analyzing your feedback..."):
+
+                    category, sentiment, reason = classify_comment(
+                        comment.strip()
+                    )
+
+                review_required, review_reason = check_review_required(
+                    comment.strip(),
+                    rating,
+                    category,
+                    sentiment
                 )
 
-            review_required, review_reason = check_review_required(
-                comment.strip(), rating, category, sentiment
+            new_feedback = pd.DataFrame([{
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "rating": rating,
+                "comment": comment.strip(),
+                "category": category,
+                "sentiment": sentiment,
+                "reason": reason,
+                "review_required": review_required,
+                "review_reason": review_reason
+            }])
+
+            data = load_feedback()
+
+            data = pd.concat(
+                [data, new_feedback],
+                ignore_index=True
             )
 
-        new_feedback = pd.DataFrame([{
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "rating": rating,
-            "comment": comment.strip(),
-            "category": category,
-            "sentiment": sentiment,
-            "reason": reason,
-            "review_required": review_required,
-            "review_reason": review_reason
-        }])
+            save_feedback(data)
 
-        data = load_feedback()
-        data = pd.concat([data, new_feedback], ignore_index=True)
-        save_feedback(data)
+            st.success("Thank you! Your feedback has been submitted.")
 
-        st.success("Thank you! Your feedback has been submitted.")
+            if category == "api_error":
 
-        if category == "api_error":
-            st.warning(
-                "Your feedback was saved, but AI analysis was unavailable. "
-                "It has been flagged for manual review."
-            )
+                st.warning(
+                    "Your feedback was saved, but AI analysis was unavailable. "
+                    "It has been flagged for manual review."
+                )
 
 
 # OWNER DASHBOARD
-
 if page == "Owner Dashboard":
 
     st.header("Customer Feedback Dashboard")
@@ -263,7 +280,10 @@ if page == "Owner Dashboard":
 
     else:
 
-        data["rating"] = pd.to_numeric(data["rating"], errors="coerce")
+        data["rating"] = pd.to_numeric(
+            data["rating"],
+            errors="coerce"
+        )
 
         data["review_required"] = (
             data["review_required"]
@@ -278,7 +298,10 @@ if page == "Owner Dashboard":
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric("Total Feedback", total_feedback)
+        col1.metric(
+            "Total Feedback",
+            total_feedback
+        )
 
         col2.metric(
             "Average Rating",
@@ -286,9 +309,19 @@ if page == "Owner Dashboard":
             if pd.notna(average_rating) else "N/A"
         )
 
-        col3.metric("Needs Manual Review", manual_reviews)
+        col3.metric(
+            "Needs Manual Review",
+            manual_reviews
+        )
 
         st.divider()
+
+        st.caption(
+            "The dashboard helps identify recurring passenger complaints "
+            "and prioritize feedback that may require human follow-up. "
+            "Only written comments with successful AI classifications "
+            "are included in the category charts."
+        )
 
         comments = data[
             (data["comment"].fillna("").str.strip() != "") &
@@ -313,12 +346,16 @@ if page == "Owner Dashboard":
                 title="Number of Comments per Category"
             )
 
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(
+                fig1,
+                use_container_width=True
+            )
 
             st.subheader("Average Rating by Category")
 
             rating_by_category = (
-                comments.groupby("category")["rating"]
+                comments.dropna(subset=["rating"])
+                .groupby("category")["rating"]
                 .mean()
                 .reset_index()
             )
@@ -331,7 +368,10 @@ if page == "Owner Dashboard":
                 range_y=[0, 5]
             )
 
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(
+                fig2,
+                use_container_width=True
+            )
 
         st.divider()
 
@@ -341,16 +381,25 @@ if page == "Owner Dashboard":
 
         if flagged.empty:
 
-            st.success("There are currently no comments requiring review.")
+            st.success(
+                "There are currently no comments requiring review."
+            )
 
         else:
 
-            st.write(f"{len(flagged)} comments need attention.")
+            st.write(
+                f"{len(flagged)} comments need attention."
+            )
 
             for _, row in flagged.iterrows():
 
+                if pd.notna(row["rating"]):
+                    rating_display = f"Rating: {row['rating']}/5"
+                else:
+                    rating_display = "No rating"
+
                 with st.expander(
-                    f"Rating: {row['rating']}/5 | {row['category']}"
+                    f"{rating_display} | {row['category']}"
                 ):
 
                     st.write("**Customer comment:**")
@@ -362,4 +411,7 @@ if page == "Owner Dashboard":
                     st.write("**Why it was flagged:**")
                     st.write(row["review_reason"])
 
-                    st.write("**Sentiment:**", row["sentiment"])
+                    st.write(
+                        "**Sentiment:**",
+                        row["sentiment"]
+                    )
